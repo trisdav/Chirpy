@@ -168,6 +168,48 @@ func (cfg *apiConfig) chirps(next http.Handler) http.Handler {
 }
 
 
+func (cfg *apiConfig) getChirps(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type","application/json")
+
+			chirps, err := cfg.dbQueries.SelectChirps(r.Context())
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":"Failed to select chirps in db"}`))
+				return
+			}
+
+			type jsonFormatter struct {
+				ID uuid.UUID `json:"id"`
+				Body string `json:"body"`
+				CreatedAt time.Time `json:"created_at"`
+				UpdatedAt time.Time `json:"updated_at"`
+				UserID uuid.UUID `json:"user_id"`
+			}
+			finalList := []jsonFormatter{}
+
+			for _, chirp := range chirps {
+				newChirp := new(jsonFormatter)
+				newChirp.ID = chirp.ID
+				newChirp.Body = chirp.Body
+				newChirp.CreatedAt = chirp.CreatedAt.Time
+				newChirp.UpdatedAt = chirp.UpdatedAt.Time
+				newChirp.UserID = chirp.UserID
+				finalList = append(finalList, *newChirp)
+			}
+
+			json, err2 := json.Marshal(finalList)
+			if (err2 != nil) {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":"Failed to parse chirps from db"}`))
+				return
+			}
+			w.WriteHeader(200)
+			w.Write(json)
+		})
+}
+
+
 func main() {
 	// db url
 	godotenv.Load()
@@ -190,6 +232,7 @@ func main() {
 	// db pages
 	mux.Handle("POST /api/users",apiCfg.users(http.StripPrefix("/api/users/",fs)))
 	mux.Handle("POST /api/chirps",apiCfg.chirps(http.StripPrefix("/api/chirps/",fs)))
+	mux.Handle("GET /api/chirps",apiCfg.getChirps(http.StripPrefix("/api/chirps/",fs)))
 
 	// initial pages
 	mux.HandleFunc("GET /api/healthz",healthz)
