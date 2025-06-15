@@ -14,13 +14,13 @@ func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 		Subject: userID.String(),
 	})
 
-	tokenString, err := token.SignedString(tokenSecret)
+	tokenString, err := token.SignedString([]byte(tokenSecret))
 	return tokenString, err
 }
 
 func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return []byte("AllYourBase"), nil
+		return []byte(tokenSecret), nil
 	})
 	var id uuid.UUID
 	if err != nil {
