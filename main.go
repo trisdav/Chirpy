@@ -18,6 +18,7 @@ import (
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries *database.Queries
+	BearerToken string
 }
 
 type User struct {
@@ -25,6 +26,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Token    string     `json:"token"`
 }
 
 type Chirp struct {
@@ -141,10 +143,25 @@ func (cfg *apiConfig) users(next http.Handler) http.Handler {
 
 func (cfg *apiConfig) chirps(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+			bToken, berr := auth.GetBearerToken(r.Header)
+			if (berr != nil) {
+				w.WriteHeader(401)
+				w.Write([]byte(`{"error":"No bearer token"}`))
+				return
+			}
+
+			id,ierr := auth.ValidateJWT(bToken, cfg.BearerToken)
+
+			if (ierr != nil || id == uuid.Nil ) {
+				w.WriteHeader(401)
+				w.Write([]byte(`{"error":"Invalid bearer token"}`))
+				return
+			}
+
 			w.Header().Set("Content-Type","application/json")
 			type parameters struct {
 				Body string `json:"body"`
-				UserID uuid.UUID `json:"user_id"`
 			}
 
 			decoder := json.NewDecoder(r.Body)
@@ -164,7 +181,7 @@ func (cfg *apiConfig) chirps(next http.Handler) http.Handler {
 			}
 			cParams := database.CreateChirpParams{}
 			cParams.Body = badWordCheck(params.Body)
-			cParams.UserID = params.UserID
+			cParams.UserID = id
 
 			chirp, err2 := cfg.dbQueries.CreateChirp(r.Context(), cParams)
 			if err2 != nil {
@@ -194,11 +211,15 @@ func (cfg *apiConfig) login(next http.Handler) http.Handler {
 			type parameters struct {
 				Password string `json:"password"`
 				Email string `json:"email"`
+				ExpiresInSeconds time.Duration `json:"expires_in_seconds"`
 			}
 			params := parameters{}
 			err := decoder.Decode(&params)
 			if err != nil {
 				fmt.Println("Error decoding params")
+			}
+			if (params.ExpiresInSeconds == 0) {
+				params.ExpiresInSeconds=time.Minute * 60;
 			}
 			//to do
 			user, hErr := cfg.dbQueries.GetUser(r.Context(), params.Email)
@@ -213,6 +234,14 @@ func (cfg *apiConfig) login(next http.Handler) http.Handler {
 				w.Write([]byte(`{"error":"Invalid credentials"}`))
 				return
 			}
+
+			token, terr := auth.MakeJWT(user.ID, cfg.BearerToken, params.ExpiresInSeconds)
+			if (terr != nil) {
+				w.WriteHeader(401)
+				w.Write([]byte(`{"error":"Failed to create token"}`))
+				return
+			}
+
 			userStruct := new(User)
 			userStruct.ID = user.ID
 			if user.CreatedAt.Valid {
@@ -222,6 +251,7 @@ func (cfg *apiConfig) login(next http.Handler) http.Handler {
 				userStruct.UpdatedAt = user.UpdatedAt.Time
 			}
 			userStruct.Email = user.Email
+			userStruct.Token = token
 			json, _ := json.Marshal(userStruct)
 			w.Header().Set("Content-Type","application/json")
 			w.WriteHeader(200)
@@ -275,6 +305,21 @@ func (cfg *apiConfig) getChirps(next http.Handler) http.Handler {
 
 func (cfg *apiConfig) getChirp(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			bToken, berr := auth.GetBearerToken(r.Header)
+			if (berr != nil) {
+				w.WriteHeader(401)
+				w.Write([]byte(`{"error":"No bearer token"}`))
+				return
+			}
+
+			id,ierr := auth.ValidateJWT(bToken, cfg.BearerToken)
+
+			if (ierr != nil || id == uuid.Nil ) {
+				w.WriteHeader(401)
+				w.Write([]byte(`{"error":"Invalid bearer token"}`))
+				return
+			}
+
 			w.Header().Set("Content-Type","application/json")
 
 			chirpUuid,uerr := uuid.Parse(r.PathValue("chirp_id"))
@@ -322,6 +367,7 @@ func main() {
 	// db url
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
+	bearerToken := os.Getenv("BEARER_TOKEN")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		fmt.Println("Failed to connect to database")
@@ -333,6 +379,7 @@ func main() {
 	fs := http.FileServer(http.Dir(".")) 
 	apiCfg:=new(apiConfig)
 	apiCfg.dbQueries = dbQueries
+	apiCfg.BearerToken = bearerToken
 
 	
 	mux:=http.NewServeMux()

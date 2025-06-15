@@ -4,6 +4,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"time"
+	"errors"
+	"net/http"
+	"strings"
 )
 
 func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
@@ -43,4 +46,13 @@ func HashPassword(password string) (string, error) {
 
 func CheckPasswordHash(hash, password string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hash),[]byte(password));
+}
+
+func GetBearerToken(header http.Header) (string, error) {
+	hstr := header.Get("Authorization");
+	var err error
+	if !strings.HasPrefix(hstr, "Bearer ") {
+		err = errors.New("No bearer token in header")
+	}
+	return strings.TrimPrefix(hstr,"Bearer "), err
 }
